@@ -11,8 +11,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -39,6 +42,12 @@ import kotlin.random.Random
  * engine.stop()
  * ```
  */
+data class ClickEvent(
+    val x: Float,
+    val y: Float,
+    val actionType: ActionType
+)
+
 class ClickEngine {
 
     companion object {
@@ -46,6 +55,9 @@ class ClickEngine {
     }
 
     private var job: Job? = null
+
+    private val _eventFlow = MutableSharedFlow<ClickEvent>(extraBufferCapacity = 16)
+    val eventFlow: SharedFlow<ClickEvent> = _eventFlow.asSharedFlow()
 
     private val _state = MutableStateFlow(EngineState.IDLE)
     val state: StateFlow<EngineState> = _state.asStateFlow()
@@ -107,7 +119,9 @@ class ClickEngine {
                     executeAction(point)
 
                     // Calculate delay to next action
-                    val interval = if (config.isRandomInterval) {
+                    val interval = if (point.delayMs > 0L) {
+                        point.delayMs
+                    } else if (config.isRandomInterval) {
                         Random.nextLong(config.randomIntervalMin, config.randomIntervalMax + 1)
                     } else {
                         config.clickIntervalMs
@@ -170,6 +184,8 @@ class ClickEngine {
             stop()
             return
         }
+
+        _eventFlow.tryEmit(ClickEvent(point.x, point.y, point.actionType))
 
         when (point.actionType) {
             ActionType.CLICK -> {

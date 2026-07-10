@@ -7,7 +7,8 @@ package com.autoflow.automation.models
  * @param x The X coordinate on screen (pixels)
  * @param y The Y coordinate on screen (pixels)
  * @param actionType The type of action to perform at this point
- * @param duration Duration in milliseconds (click duration, long press hold time, swipe duration, or wait time)
+ * @param duration How long the tap/gesture lasts in ms (e.g. 50ms for a fast tap, 500ms for long press)
+ * @param delayMs Post-click wait time in ms; 0 means fall back to the global [AutomationConfig.clickIntervalMs]
  * @param endX End X coordinate for swipe gestures
  * @param endY End Y coordinate for swipe gestures
  * @param order Execution order (lower = earlier)
@@ -19,6 +20,7 @@ data class ClickPoint(
     val y: Float,
     val actionType: ActionType = ActionType.CLICK,
     val duration: Long = 100L,
+    val delayMs: Long = 0L,
     val endX: Float = 0f,
     val endY: Float = 0f,
     val order: Int = 0,
