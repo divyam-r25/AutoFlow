@@ -12,11 +12,17 @@ object AutoFlowColors {
 
     val Primary = Color(0xFF3B82F6)
 
+    val PrimaryDark = Color(0xFF1D4ED8)
+
     val Success = Color(0xFF22C55E)
+
+    val Warning = Color(0xFFF59E0B)
 
     val Error = Color(0xFFEF4444)
 
     val TextPrimary = Color.White
 
     val TextSecondary = Color(0xFFCBD5E1)
+
+    val TextTertiary = Color(0xFF94A3B8)
 }
