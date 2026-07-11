@@ -238,6 +238,9 @@ class OverlayService : Service() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
         }
+        playPauseButton = panelBtn(
+            if (isRunning) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+            COLOR_SUCCESS) { onPlayPauseClicked() }
         row.addView(playPauseButton, btnP())
         row.addView(panelBtn(android.R.drawable.ic_delete, COLOR_ERROR) { onStopClicked() }, btnP())
         row.addView(panelBtn(android.R.drawable.ic_input_add, COLOR_PRIMARY) { addClickPoint() }, btnP())
