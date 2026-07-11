@@ -1,50 +1,6 @@
-<component name="InspectionProjectProfileManager">
-  <profile version="1.0">
-    <option name="myName" value="Project Default" />
-    <inspection_tool class="ComposePreviewDimensionRespectsLimit" enabled="true" level="WARNING" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="ComposePreviewMustBeTopLevelFunction" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="ComposePreviewNeedsComposableAnnotation" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="ComposePreviewNotSupportedInUnitTestFiles" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="GlancePreviewDimensionRespectsLimit" enabled="true" level="WARNING" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="GlancePreviewMustBeTopLevelFunction" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="GlancePreviewNeedsComposableAnnotation" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="GlancePreviewNotSupportedInUnitTestFiles" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewAnnotationInFunctionWithParameters" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewApiLevelMustBeValid" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewDeviceShouldUseNewSpec" enabled="true" level="WEAK WARNING" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewFontScaleMustBeGreaterThanZero" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewMultipleParameterProviders" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewParameterProviderOnFirstParameter" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-    <inspection_tool class="PreviewPickerAnnotation" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="composableFile" value="true" />
-    </inspection_tool>
-  </profile>
-</component>
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+}
