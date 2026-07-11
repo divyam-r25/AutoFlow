@@ -317,63 +317,7 @@ class OverlayService : Service() {
 
     // ─────────────────────────────────────────────────────────────────
     // Markers
-    // ─────────────────────────────────────────────────────────────────
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun addClickPoint() {
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
-
-        val id = nextPointId++
-        val sz = dpToPx(44)
-
-        val circle = FrameLayout(this).apply {
-            background = createCircle(COLOR_PRIMARY); elevation = dpToPx(5).toFloat()
-        }
-        circle.addView(makeText("$id", COLOR_TEXT, 13f, bold = true).also { it.gravity = Gravity.CENTER },
-            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-
-        val mp = overlayParams(sz, sz).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = metrics.widthPixels / 2 - sz / 2; y = metrics.heightPixels / 2 - sz / 2
-        }
-        val md = MarkerData(circle, mp, id, globalTapDuration, globalDelayValue, globalDelayUnit)
-        circle.setOnTouchListener(markerTouchListener(md))
-
-        windowManager.addView(circle, mp)
-        markers.add(md)
-        if (isPanelVisible) { hidePanel(); createPanel() }
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    private fun markerTouchListener(md: MarkerData) = object : View.OnTouchListener {
-        private var ix = 0; private var iy = 0
-        private var itx = 0f; private var ity = 0f
-        private var moved = false
-
-        override fun onTouch(v: View, e: MotionEvent): Boolean {
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    ix = md.params.x; iy = md.params.y
-                    itx = e.rawX; ity = e.rawY; moved = false; return true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - itx; val dy = e.rawY - ity
-                    if (abs(dx) > 8 || abs(dy) > 8) moved = true
-                    md.params.x = ix + dx.toInt(); md.params.y = iy + dy.toInt()
-                    windowManager.updateViewLayout(v, md.params)
-                    refreshSwipeLines()  // live update the line
-                    return true
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved) showPointConfig(md); return true
-                }
-            }
-            return false
-        }
-    }
-
-    /** Creates a draggable end-point marker for swipe gestures */
+    // ───────────────────────────�    /** Creates a draggable end-point marker for swipe gestures */
     @SuppressLint("ClickableViewAccessibility")
     private fun createSwipeEndMarker(md: MarkerData) {
         if (md.swipeEndView != null) return  // already exists
@@ -391,9 +335,19 @@ class OverlayService : Service() {
         val innerSz = dpToPx(14)
         endCircle.addView(inner, FrameLayout.LayoutParams(innerSz, innerSz, Gravity.CENTER))
 
-        // Position 200px below the start marker initially
-        val startX = md.params.x + dpToPx(22) - sz / 2
-        val startY = md.params.y + dpToPx(200)
+        // Query metrics to position safely within bounds
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
+        val screenWidth = metrics.widthPixels
+        val screenHeight = metrics.heightPixels
+
+        // Position 200px below start marker, or 200px above if close to the bottom screen edge
+        val startX = (md.params.x + dpToPx(22) - sz / 2).coerceIn(0, screenWidth - sz)
+        val startY = if (md.params.y + dpToPx(200) + sz > screenHeight) {
+            (md.params.y - dpToPx(200)).coerceAtLeast(0)
+        } else {
+            md.params.y + dpToPx(200)
+        }
 
         val ep = overlayParams(sz, sz).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -447,6 +401,7 @@ class OverlayService : Service() {
     private fun showPointConfig(md: MarkerData) {
         dismissDialog()
 
+        val initialActionType = md.actionType
         var workValue      = md.delayValue
         var workUnit       = md.delayUnit
         var workActionType = md.actionType
@@ -563,10 +518,21 @@ class OverlayService : Service() {
         root.addView(durationLabel, fillW().apply { bottomMargin = dpToPx(6) })
 
         actionTypePopup.setOnMenuItemClickListener { item ->
-            workActionType = if (item.itemId == 0) ActionType.CLICK else ActionType.SWIPE
-            actionTypeBtn.text = if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾"
-            swipeHintContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
-            durationLabel.text = if (workActionType == ActionType.SWIPE) "Swipe Speed (ms)" else "Tap Duration (ms)"
+            val selectedType = if (item.itemId == 0) ActionType.CLICK else ActionType.SWIPE
+            if (selectedType != workActionType) {
+                workActionType = selectedType
+                actionTypeBtn.text = if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾"
+                swipeHintContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
+                durationLabel.text = if (workActionType == ActionType.SWIPE) "Swipe Speed (ms)" else "Tap Duration (ms)"
+                
+                // Live preview changes to action type
+                md.actionType = workActionType
+                if (workActionType == ActionType.SWIPE) {
+                    createSwipeEndMarker(md)
+                } else {
+                    removeSwipeEndMarker(md)
+                }
+            }
             true
         }
 
@@ -611,6 +577,84 @@ class OverlayService : Service() {
         bottomRow.addView(View(this), LinearLayout.LayoutParams(0, dpToPx(1), 1f))
 
         val cancelBtn = makeText("CANCEL", 0xFFFF4081.toInt(), 13f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
+            setOnClickListener {
+                // Revert any live preview changes
+                if (md.actionType != initialActionType) {
+                    md.actionType = initialActionType
+                    if (initialActionType == ActionType.SWIPE) {
+                        createSwipeEndMarker(md)
+                    } else {
+                        removeSwipeEndMarker(md)
+                    }
+                }
+                dismissDialog()
+            }
+        }
+        bottomRow.addView(cancelBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        val okBtn = makeText("OK", 0xFFFF4081.toInt(), 13f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
+            setOnClickListener {
+                // Save delay
+                md.delayValue = (delayInput.text.toString().toLongOrNull() ?: workValue).coerceAtLeast(1L)
+                md.delayUnit  = workUnit
+
+                // Save duration
+                md.tapDuration = (durationInput.text.toString().toLongOrNull() ?: workDuration).coerceAtLeast(1L)
+
+                // Save action type — manage end-point marker
+                md.actionType = workActionType
+
+                if (workActionType == ActionType.SWIPE) {
+                    createSwipeEndMarker(md)
+                    (md.view as? FrameLayout)?.getChildAt(0)?.let { tv ->
+                        (tv as? TextView)?.text = "${md.id}↕"
+                    }
+                } else {
+                    removeSwipeEndMarker(md)
+                    (md.view as? FrameLayout)?.getChildAt(0)?.let { tv ->
+                        (tv as? TextView)?.text = "${md.id}"
+                    }
+                }
+
+                dismissDialog()
+            }
+        }
+        bottomRow.addView(okBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = dpToPx(8) })
+
+        root.addView(bottomRow, fillW())
+
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
+
+        configDialogView = root
+        val dp = overlayParams(dpToPx(300), WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = (md.params.x - dpToPx(140)).coerceIn(dpToPx(8), metrics.widthPixels - dpToPx(308))
+            y = (md.params.y + dpToPx(50)).coerceAtMost(metrics.heightPixels - dpToPx(400))
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
+        }
+        windowManager.addView(configDialogView, dp)
+
+        // Force exact measurement and update height dynamically to prevent stretching
+        root.post {
+            try {
+                if (configDialogView != null) {
+                    root.measure(
+                        View.MeasureSpec.makeMeasureSpec(dp.width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                    )
+                    dp.height = root.measuredHeight
+                    windowManager.updateViewLayout(root, dp)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating dialog layout height", e)
+            }
+        }
+    }f, bold = true).apply {
             setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
             setOnClickListener { dismissDialog() }
         }
