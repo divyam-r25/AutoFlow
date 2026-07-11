@@ -470,21 +470,21 @@ class OverlayService : Service() {
         }
         badge.addView(makeText("${md.id}", COLOR_TEXT, 14f, bold = true).also { it.gravity = Gravity.CENTER },
             FrameLayout.LayoutParams(dpToPx(32), dpToPx(32)))
-        headerRow.addView(badge)
+        headerRow.addView(badge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         headerRow.addView(makeText("  Point ${md.id}", COLOR_TEXT, 15f, bold = true),
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(headerRow, fillW().apply { bottomMargin = dpToPx(16) })
 
         // ── Divider ───────────────────────────────────────────────────
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(16) })
+        addDivider(root, bottomMarginDp = 16)
 
         // ── Action Type row ───────────────────────────────────────────
         val actionTypeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
-        actionTypeRow.addView(makeText("Action Type", COLOR_TEXT_HINT, 13f))
-        actionTypeRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        actionTypeRow.addView(makeText("Action Type", COLOR_TEXT_HINT, 13f),
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        actionTypeRow.addView(View(this), LinearLayout.LayoutParams(0, dpToPx(1), 1f))
 
         val actionTypeBtn = makeText(
             if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾",
@@ -500,14 +500,9 @@ class OverlayService : Service() {
         val actionTypePopup = PopupMenu(this, actionTypeBtn)
         actionTypePopup.menu.add(0, 0, 0, "Click")
         actionTypePopup.menu.add(0, 1, 0, "Swipe")
-        actionTypePopup.setOnMenuItemClickListener { item ->
-            workActionType = if (item.itemId == 0) ActionType.CLICK else ActionType.SWIPE
-            actionTypeBtn.text = if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾"
-            swipeHintContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
-            true
-        }
+        
         actionTypeBtn.setOnClickListener { actionTypePopup.show() }
-        actionTypeRow.addView(actionTypeBtn)
+        actionTypeRow.addView(actionTypeBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         root.addView(actionTypeRow, fillW().apply { bottomMargin = dpToPx(8) })
 
         // Swipe Hint (shown when Swipe selected)
@@ -519,7 +514,7 @@ class OverlayService : Service() {
         root.addView(swipeHintContainer, fillW().apply { bottomMargin = dpToPx(12) })
 
         // ── Divider ───────────────────────────────────────────────────
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
+        addDivider(root, bottomMarginDp = 12)
 
         // ── Delay row ─────────────────────────────────────────────────
         root.addView(makeText("Delay After Action", COLOR_TEXT_HINT, 12f), fillW().apply { bottomMargin = dpToPx(6) })
@@ -555,11 +550,11 @@ class OverlayService : Service() {
         unitBtn.setOnClickListener { popup.show() }
 
         delayRow.addView(delayInputContainer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(12) })
-        delayRow.addView(unitBtn)
+        delayRow.addView(unitBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         root.addView(delayRow, fillW().apply { bottomMargin = dpToPx(16) })
 
         // ── Duration row ──────────────────────────────────────────────
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
+        addDivider(root, bottomMarginDp = 12)
 
         // Duration label changes based on action type
         val durationLabel = makeText(
@@ -598,11 +593,11 @@ class OverlayService : Service() {
         }
 
         durationRow.addView(durationInputContainer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(12) })
-        durationRow.addView(msLabel)
+        durationRow.addView(msLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         root.addView(durationRow, fillW().apply { bottomMargin = dpToPx(16) })
 
         // ── Bottom buttons ────────────────────────────────────────────
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
+        addDivider(root, bottomMarginDp = 12)
 
         val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -612,14 +607,14 @@ class OverlayService : Service() {
             setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
             setOnClickListener { removeMarker(md.id); dismissDialog() }
         }
-        bottomRow.addView(deleteBtn)
-        bottomRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        bottomRow.addView(deleteBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        bottomRow.addView(View(this), LinearLayout.LayoutParams(0, dpToPx(1), 1f))
 
         val cancelBtn = makeText("CANCEL", 0xFFFF4081.toInt(), 13f, bold = true).apply {
             setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
             setOnClickListener { dismissDialog() }
         }
-        bottomRow.addView(cancelBtn)
+        bottomRow.addView(cancelBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         val okBtn = makeText("OK", 0xFFFF4081.toInt(), 13f, bold = true).apply {
             setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
@@ -670,6 +665,22 @@ class OverlayService : Service() {
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
         }
         windowManager.addView(configDialogView, dp)
+
+        // Force exact measurement and update height dynamically to prevent stretching
+        root.post {
+            try {
+                if (configDialogView != null) {
+                    root.measure(
+                        View.MeasureSpec.makeMeasureSpec(dp.width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                    )
+                    dp.height = root.measuredHeight
+                    windowManager.updateViewLayout(root, dp)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating dialog layout height", e)
+            }
+        }
     }
 
     private fun dismissDialog() {
@@ -800,12 +811,18 @@ class OverlayService : Service() {
             elevation = dpToPx(2).toFloat(); setOnClickListener { onClick() }
         }
 
-    private fun makeDividerLine(vertical: Boolean = false): View = View(this).apply {
-        setBackgroundColor(COLOR_DIVIDER)
-        layoutParams = if (vertical)
-            LinearLayout.LayoutParams(1, LinearLayout.LayoutParams.MATCH_PARENT)
-        else
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+    private fun addDivider(root: LinearLayout, topMarginDp: Int = 0, bottomMarginDp: Int = 0) {
+        val line = View(this).apply {
+            setBackgroundColor(COLOR_DIVIDER)
+        }
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dpToPx(1)
+        ).apply {
+            topMargin = dpToPx(topMarginDp)
+            bottomMargin = dpToPx(bottomMarginDp)
+        }
+        root.addView(line, lp)
     }
 
     private fun fillW() = LinearLayout.LayoutParams(
