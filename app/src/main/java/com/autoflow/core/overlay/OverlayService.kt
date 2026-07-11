@@ -20,8 +20,10 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.text.InputType
 import com.autoflow.automation.engine.ClickEngine
 import com.autoflow.automation.models.ActionType
 import com.autoflow.automation.models.AutomationConfig
@@ -396,12 +398,17 @@ class OverlayService : Service() {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
 
-        // Value display box
-        val valueDisplay = makeText("$workValue", COLOR_TEXT, 18f, bold = true).apply {
+        // Value display input (manually editable)
+        val valueInput = EditText(this).apply {
+            setText("$workValue")
+            setTextColor(COLOR_TEXT)
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             background = roundRect(COLOR_CARD_INNER, dpToPx(8))
             setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
             minWidth = dpToPx(80)
+            inputType = InputType.TYPE_CLASS_NUMBER
         }
 
         // Unit selector button (shows current unit + expand arrow)
@@ -455,7 +462,7 @@ class OverlayService : Service() {
             }
         }
 
-        valueRow.addView(valueDisplay,
+        valueRow.addView(valueInput,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(8) })
         valueRow.addView(unitBtn,
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
@@ -463,8 +470,6 @@ class OverlayService : Service() {
         root.addView(unitDropdown, fillW().apply { bottomMargin = dpToPx(8) })
 
         // ── Stepper row for delay value ──────────────────────────────
-        fun refreshValue() { valueDisplay.text = "$workValue" }
-
         val stepRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
         }
@@ -475,9 +480,11 @@ class OverlayService : Service() {
                 background = roundRect(COLOR_CARD_INNER, dpToPx(8))
                 setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
                 setOnClickListener {
-                    workValue = if (isInc) (workValue + step).coerceAtMost(99999L)
-                                else        (workValue - step).coerceAtLeast(1L)
-                    refreshValue()
+                    val currentVal = valueInput.text.toString().toLongOrNull() ?: workValue
+                    workValue = if (isInc) (currentVal + step).coerceAtMost(99999L)
+                                else        (currentVal - step).coerceAtLeast(1L)
+                    valueInput.setText("$workValue")
+                    valueInput.setSelection(valueInput.text.length)
                 }
             }
             stepRow.addView(btn, LinearLayout.LayoutParams(
@@ -536,6 +543,8 @@ class OverlayService : Service() {
             background = roundRect(COLOR_PRIMARY, dpToPx(8))
             setPadding(dpToPx(14), dpToPx(10), dpToPx(14), dpToPx(10))
             setOnClickListener {
+                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
+                workValue = enteredVal.coerceIn(1L, 99999L)
                 // Commit to the marker
                 md.delayValue = workValue
                 md.delayUnit  = workUnit
@@ -556,10 +565,11 @@ class OverlayService : Service() {
         @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
 
         configDialogView = root
-        val dp = overlayParams(dpToPx(290), WindowManager.LayoutParams.WRAP_CONTENT).apply {
+        val dp = overlayParams(dpToPx(290), WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
             gravity = Gravity.TOP or Gravity.START
             x = (md.params.x - dpToPx(130)).coerceIn(dpToPx(8), metrics.widthPixels - dpToPx(300))
             y = (md.params.y + dpToPx(50)).coerceAtMost(metrics.heightPixels - dpToPx(350))
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
         }
         windowManager.addView(configDialogView, dp)
     }
@@ -593,9 +603,15 @@ class OverlayService : Service() {
         root.addView(makeText("Default delay between taps", COLOR_TEXT_SEC, 11f, bold = true),
             fillW().apply { bottomMargin = dpToPx(10) })
 
-        val valueDisplay = makeText("$workValue", COLOR_TEXT, 18f, bold = true).apply {
+        val valueInput = EditText(this).apply {
+            setText("$workValue")
+            setTextColor(COLOR_TEXT)
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER; background = roundRect(COLOR_CARD_INNER, dpToPx(8))
             setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+            minWidth = dpToPx(80)
+            inputType = InputType.TYPE_CLASS_NUMBER
         }
         val unitBtn = makeText("${UNIT_LABELS[workUnit]}  ▾", COLOR_TEXT, 12f).apply {
             background = roundRect(COLOR_CARD_INNER, dpToPx(8))
@@ -635,13 +651,12 @@ class OverlayService : Service() {
         val vr = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
-        vr.addView(valueDisplay, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        vr.addView(valueInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             .apply { marginEnd = dpToPx(8) })
         vr.addView(unitBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(vr, fillW().apply { bottomMargin = dpToPx(8) })
         root.addView(unitDropdown, fillW().apply { bottomMargin = dpToPx(8) })
 
-        fun refreshVal() { valueDisplay.text = "$workValue" }
         val sr = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
         }
@@ -651,9 +666,11 @@ class OverlayService : Service() {
                 background = roundRect(COLOR_CARD_INNER, dpToPx(8))
                 setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
                 setOnClickListener {
-                    workValue = if (inc) (workValue + step).coerceAtMost(99999L)
-                                else     (workValue - step).coerceAtLeast(1L)
-                    refreshVal()
+                    val currentVal = valueInput.text.toString().toLongOrNull() ?: workValue
+                    workValue = if (inc) (currentVal + step).coerceAtMost(99999L)
+                                else     (currentVal - step).coerceAtLeast(1L)
+                    valueInput.setText("$workValue")
+                    valueInput.setSelection(valueInput.text.length)
                 }
             }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dpToPx(4); marginEnd = dpToPx(4) })
@@ -694,6 +711,8 @@ class OverlayService : Service() {
             background = roundRect(COLOR_PRIMARY, dpToPx(10))
             setPadding(dpToPx(14), dpToPx(12), dpToPx(14), dpToPx(12))
             setOnClickListener {
+                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
+                workValue = enteredVal.coerceIn(1L, 99999L)
                 globalDelayValue = workValue; globalDelayUnit = workUnit; globalTapDuration = workDur
                 markers.forEach { m ->
                     m.tapDuration = workDur; m.delayValue = workValue; m.delayUnit = workUnit
@@ -707,6 +726,8 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER; background = roundRect(COLOR_SUCCESS, dpToPx(10))
             setPadding(dpToPx(14), dpToPx(12), dpToPx(14), dpToPx(12))
             setOnClickListener {
+                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
+                workValue = enteredVal.coerceIn(1L, 99999L)
                 globalDelayValue = workValue; globalDelayUnit = workUnit; globalTapDuration = workDur
                 dismissDialog()
             }
@@ -717,9 +738,10 @@ class OverlayService : Service() {
         @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
 
         configDialogView = root
-        windowManager.addView(root, overlayParams(dpToPx(290), WindowManager.LayoutParams.WRAP_CONTENT).apply {
+        windowManager.addView(root, overlayParams(dpToPx(290), WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
             gravity = Gravity.TOP or Gravity.START
             x = metrics.widthPixels / 2 - dpToPx(145); y = dpToPx(100)
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
         })
     }
 
@@ -862,9 +884,10 @@ class OverlayService : Service() {
 
     private fun dpToPx(dp: Int) = (dp * resources.displayMetrics.density).toInt()
 
-    private fun overlayParams(w: Int, h: Int) = WindowManager.LayoutParams(
+    private fun overlayParams(w: Int, h: Int, focusable: Boolean = false) = WindowManager.LayoutParams(
         w, h, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT)
+        if (focusable) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        PixelFormat.TRANSLUCENT)
 
     private fun createCircle(color: Int) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL; setColor(color)
