@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.PointF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
@@ -44,10 +45,10 @@ import kotlin.math.abs
  *
  * Features:
  * - Draggable floating bubble to toggle the control panel
- * - Control Panel with Play/Pause, Stop, Add Point, Global Settings, Close
+ * - Control Panel with Play/Pause, Stop, Add Point, Close
  * - Numbered draggable markers — tap to configure individually
- * - Per-pointer config dialog: delay (value + unit picker) + tap duration
- * - Global Settings dialog with Apply-to-All
+ * - Per-pointer config dialog: action type, delay, duration
+ * - Swipe mode: visual end-point marker + live line drawn on screen
  */
 class OverlayService : Service() {
 
@@ -57,7 +58,7 @@ class OverlayService : Service() {
         private const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.autoflow.ACTION_STOP"
 
-        private const val COLOR_BG         = 0xE8182432.toInt()  // dark navy, slightly transparent
+        private const val COLOR_BG         = 0xE8182432.toInt()
         private const val COLOR_CARD        = 0xFF1E293B.toInt()
         private const val COLOR_CARD_INNER  = 0xFF334155.toInt()
         private const val COLOR_PRIMARY     = 0xFF3B82F6.toInt()
@@ -70,10 +71,11 @@ class OverlayService : Service() {
         private const val COLOR_TEXT_HINT   = 0xFF94A3B8.toInt()
         private const val COLOR_DIVIDER     = 0xFF334155.toInt()
         private const val COLOR_SELECTED    = 0xFF3B82F6.toInt()
+        private const val COLOR_END_MARKER  = 0xFF60A5FA.toInt() // Lighter blue for end-point
 
         // Unit multipliers to convert to milliseconds
-        private const val UNIT_MS = 0
-        private const val UNIT_S  = 1
+        private const val UNIT_MS  = 0
+        private const val UNIT_S   = 1
         private const val UNIT_MIN = 2
         private val UNIT_LABELS = arrayOf("Millisecond(s)", "Second(s)", "Minute(s)")
         private val UNIT_TO_MS  = longArrayOf(1L, 1000L, 60_000L)
@@ -96,13 +98,20 @@ class OverlayService : Service() {
     // ── Config Dialog ─────────────────────────────────────────────────
     private var configDialogView: View? = null
 
+    // ── Swipe Line Overlay ────────────────────────────────────────────
+    private var swipeLineOverlay: SwipeLineOverlay? = null
+    private var swipeLineParams: WindowManager.LayoutParams? = null
+
     // ── Markers ───────────────────────────────────────────────────────
     /**
-     * Represents one click-point marker in the overlay.
+     * Represents one automation point marker in the overlay.
      *
-     * @param tapDuration   how long the tap is held (ms)
+     * @param tapDuration   how long the tap/swipe gesture is held (ms)
      * @param delayValue    numeric value the user entered (interpreted with delayUnit)
      * @param delayUnit     one of UNIT_MS / UNIT_S / UNIT_MIN
+     * @param actionType    CLICK or SWIPE
+     * @param swipeEndView  the draggable end-point circle (only for SWIPE)
+     * @param swipeEndParams layout params of the end-point marker
      */
     private data class MarkerData(
         val view: View,
@@ -112,8 +121,8 @@ class OverlayService : Service() {
         var delayValue: Long = 300L,
         var delayUnit: Int = UNIT_MS,
         var actionType: ActionType = ActionType.CLICK,
-        var swipeDirection: Int = 1, // Default DOWN
-        var swipeLengthDp: Int = 200
+        var swipeEndView: View? = null,
+        var swipeEndParams: WindowManager.LayoutParams? = null
     ) {
         /** Effective delay in milliseconds */
         val delayMs: Long get() = delayValue * UNIT_TO_MS[delayUnit]
@@ -144,6 +153,7 @@ class OverlayService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
+        createSwipeLineOverlay()
         createBubble()
         observeEngineState()
     }
@@ -183,6 +193,41 @@ class OverlayService : Service() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .addAction(Notification.Action.Builder(null, "Stop", pi).build())
             .setOngoing(true).build()
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Swipe Line Canvas Overlay
+    // ─────────────────────────────────────────────────────────────────
+
+    private fun createSwipeLineOverlay() {
+        val metrics = DisplayMetrics()
+        @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
+        swipeLineOverlay = SwipeLineOverlay(this)
+        swipeLineParams = WindowManager.LayoutParams(
+            metrics.widthPixels, metrics.heightPixels,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = 0; y = 0 }
+        windowManager.addView(swipeLineOverlay, swipeLineParams)
+    }
+
+    /** Collect all swipe pairs and redraw the canvas overlay */
+    private fun refreshSwipeLines() {
+        val half = dpToPx(22).toFloat()
+        val endHalf = dpToPx(18).toFloat()
+        val pairs = markers
+            .filter { it.actionType == ActionType.SWIPE && it.swipeEndParams != null }
+            .map { md ->
+                SwipeLineOverlay.SwipePair(
+                    start = PointF(md.params.x + half, md.params.y + half),
+                    end   = PointF(md.swipeEndParams!!.x + endHalf, md.swipeEndParams!!.y + endHalf),
+                    id    = md.id
+                )
+            }
+        swipeLineOverlay?.update(pairs)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -316,7 +361,9 @@ class OverlayService : Service() {
                     val dx = e.rawX - itx; val dy = e.rawY - ity
                     if (abs(dx) > 8 || abs(dy) > 8) moved = true
                     md.params.x = ix + dx.toInt(); md.params.y = iy + dy.toInt()
-                    windowManager.updateViewLayout(v, md.params); return true
+                    windowManager.updateViewLayout(v, md.params)
+                    refreshSwipeLines()  // live update the line
+                    return true
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!moved) showPointConfig(md); return true
@@ -326,140 +373,180 @@ class OverlayService : Service() {
         }
     }
 
+    /** Creates a draggable end-point marker for swipe gestures */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun createSwipeEndMarker(md: MarkerData) {
+        if (md.swipeEndView != null) return  // already exists
+
+        val sz = dpToPx(36)
+        val endCircle = FrameLayout(this).apply {
+            background = createCircle(COLOR_END_MARKER)
+            elevation = dpToPx(4).toFloat()
+            alpha = 0.92f
+        }
+        // Hollow inner to distinguish from start
+        val inner = View(this).apply {
+            background = createCircle(0xFF1E293B.toInt())
+        }
+        val innerSz = dpToPx(14)
+        endCircle.addView(inner, FrameLayout.LayoutParams(innerSz, innerSz, Gravity.CENTER))
+
+        // Position 200px below the start marker initially
+        val startX = md.params.x + dpToPx(22) - sz / 2
+        val startY = md.params.y + dpToPx(200)
+
+        val ep = overlayParams(sz, sz).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = startX; y = startY
+        }
+        md.swipeEndView = endCircle
+        md.swipeEndParams = ep
+
+        endCircle.setOnTouchListener(object : View.OnTouchListener {
+            private var ix = 0; private var iy = 0
+            private var itx = 0f; private var ity = 0f
+            override fun onTouch(v: View, e: MotionEvent): Boolean {
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> { ix=ep.x; iy=ep.y; itx=e.rawX; ity=e.rawY; return true }
+                    MotionEvent.ACTION_MOVE -> {
+                        ep.x = ix + (e.rawX-itx).toInt(); ep.y = iy + (e.rawY-ity).toInt()
+                        windowManager.updateViewLayout(v, ep)
+                        refreshSwipeLines()
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+
+        windowManager.addView(endCircle, ep)
+        refreshSwipeLines()
+    }
+
+    private fun removeSwipeEndMarker(md: MarkerData) {
+        md.swipeEndView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        md.swipeEndView = null
+        md.swipeEndParams = null
+        refreshSwipeLines()
+    }
+
     private fun removeMarker(id: Int) {
         markers.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let { i ->
             val md = markers.removeAt(i)
+            removeSwipeEndMarker(md)
             try { windowManager.removeView(md.view) } catch (_: Exception) {}
             if (isPanelVisible) { hidePanel(); createPanel() }
         }
     }
 
     // ─────────────────────────────────────────────────────────────────
-    // Per-Pointer Config Dialog  (matches the screenshot UX)
+    // Per-Pointer Config Dialog
     // ─────────────────────────────────────────────────────────────────
-    //
-    //  ┌─────────────────────────────────────────┐
-    //  │  ① ─────────────────────────────── [✕] │
-    //  │  The delay time before performing the   │
-    //  │  next action                            │
-    //  │  ┌──────────┐  ┌──────────────────────┐│
-    //  │  │   300    │  │  Millisecond(s)   ▾  ││  ← tap to expand unit list
-    //  │  └──────────┘  └──────────────────────┘│
-    //  │  [− −]  [−]          [+]  [+ +]        │   ← value steppers
-    //  │ ─────────────────────────────────────── │
-    //  │  ⏱ Tap Duration                        │
-    //  │  [ − ]  100 ms  [ + ]                  │
-    //  │ ─────────────────────────────────────── │
-    //  │     [Delete]                   [  OK  ] │
-    //  └─────────────────────────────────────────┘
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun showPointConfig(md: MarkerData) {
         dismissDialog()
 
-        var workValue = md.delayValue
-        var workUnit  = md.delayUnit
+        var workValue      = md.delayValue
+        var workUnit       = md.delayUnit
         var workActionType = md.actionType
-        var workSwipeDirection = md.swipeDirection
-        var workSwipeLength = md.swipeLengthDp
+        var workDuration   = md.tapDuration
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundRect(0xFF2D2D2D.toInt(), dpToPx(12))
-            elevation = dpToPx(16).toFloat()
-            setPadding(dpToPx(24), dpToPx(24), dpToPx(24), dpToPx(16))
+            background = roundRect(0xFF1E293B.toInt(), dpToPx(16))
+            elevation = dpToPx(20).toFloat()
+            setPadding(dpToPx(20), dpToPx(20), dpToPx(20), dpToPx(14))
         }
 
-        // Header Row (Badge containing the ID)
+        // ── Header: badge + title ─────────────────────────────────────
         val headerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         val badge = FrameLayout(this).apply {
-            background = createCircle(Color.WHITE)
-            val s = dpToPx(28); minimumWidth = s; minimumHeight = s
+            background = createCircle(COLOR_PRIMARY)
+            val s = dpToPx(32); minimumWidth = s; minimumHeight = s
         }
-        badge.addView(makeText("${md.id}", 0xFFF59E0B.toInt(), 13f, bold = true).also { it.gravity = Gravity.CENTER },
-            FrameLayout.LayoutParams(dpToPx(28), dpToPx(28)))
+        badge.addView(makeText("${md.id}", COLOR_TEXT, 14f, bold = true).also { it.gravity = Gravity.CENTER },
+            FrameLayout.LayoutParams(dpToPx(32), dpToPx(32)))
         headerRow.addView(badge)
-        root.addView(headerRow, fillW().apply { bottomMargin = dpToPx(12) })
+        headerRow.addView(makeText("  Point ${md.id}", COLOR_TEXT, 15f, bold = true),
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(headerRow, fillW().apply { bottomMargin = dpToPx(16) })
 
-        // Description
-        val desc = makeText("The delay time before performing the next action", 0xFFB0B0B0.toInt(), 14f).apply {
-            lineHeight = dpToPx(20)
-        }
-        root.addView(desc, fillW().apply { bottomMargin = dpToPx(16) })
+        // ── Divider ───────────────────────────────────────────────────
+        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(16) })
 
-        // Action Type Row
+        // ── Action Type row ───────────────────────────────────────────
         val actionTypeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        actionTypeRow.addView(makeText("Action Type", 0xFFB0B0B0.toInt(), 14f))
+        actionTypeRow.addView(makeText("Action Type", COLOR_TEXT_HINT, 13f))
         actionTypeRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        
-        val actionTypeBtn = makeText(if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾", Color.WHITE, 14f).apply {
+
+        val actionTypeBtn = makeText(
+            if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾",
+            COLOR_TEXT, 14f).apply {
             setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
         }
-        val actionTypePopup = PopupMenu(this, actionTypeBtn)
-        actionTypePopup.menu.add(0, 0, 0, "Click")
-        actionTypePopup.menu.add(0, 1, 0, "Swipe")
-        
-        val swipeConfigContainer = LinearLayout(this).apply {
+        val swipeHintContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
         }
 
+        val actionTypePopup = PopupMenu(this, actionTypeBtn)
+        actionTypePopup.menu.add(0, 0, 0, "Click")
+        actionTypePopup.menu.add(0, 1, 0, "Swipe")
         actionTypePopup.setOnMenuItemClickListener { item ->
             workActionType = if (item.itemId == 0) ActionType.CLICK else ActionType.SWIPE
             actionTypeBtn.text = if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾"
-            swipeConfigContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
+            swipeHintContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
             true
         }
         actionTypeBtn.setOnClickListener { actionTypePopup.show() }
         actionTypeRow.addView(actionTypeBtn)
-        root.addView(actionTypeRow, fillW().apply { bottomMargin = dpToPx(12) })
+        root.addView(actionTypeRow, fillW().apply { bottomMargin = dpToPx(8) })
 
-        // Input field + Unit selector row (Delay Label)
-        val delayLabelRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        // Swipe Hint (shown when Swipe selected)
+        val swipeHint = makeText("◉  Drag the blue end-point on screen to set swipe direction & length", 0xFF60A5FA.toInt(), 12f).apply {
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+            background = roundRect(0x1A3B82F6, dpToPx(8))
         }
-        delayLabelRow.addView(makeText("Delay Interval", 0xFFB0B0B0.toInt(), 12f))
-        root.addView(delayLabelRow, fillW().apply { bottomMargin = dpToPx(6) })
+        swipeHintContainer.addView(swipeHint, fillW())
+        root.addView(swipeHintContainer, fillW().apply { bottomMargin = dpToPx(12) })
 
-        val valueRow = LinearLayout(this).apply {
+        // ── Divider ───────────────────────────────────────────────────
+        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
+
+        // ── Delay row ─────────────────────────────────────────────────
+        root.addView(makeText("Delay After Action", COLOR_TEXT_HINT, 12f), fillW().apply { bottomMargin = dpToPx(6) })
+
+        val delayRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
-
-        // EditText for manual value entry
-        val valueInputContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        val valueInput = EditText(this).apply {
+        val delayInputContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val delayInput = EditText(this).apply {
             setText("$workValue")
-            setTextColor(Color.WHITE)
-            textSize = 18f
+            setTextColor(COLOR_TEXT)
+            textSize = 20f
             gravity = Gravity.CENTER_HORIZONTAL
             background = null
             inputType = InputType.TYPE_CLASS_NUMBER
-            setPadding(0, 0, 0, dpToPx(6))
+            setPadding(0, 0, 0, dpToPx(4))
         }
-        val underline = View(this).apply {
-            setBackgroundColor(0xFF888888.toInt())
-        }
-        valueInputContainer.addView(valueInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        valueInputContainer.addView(underline, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1)))
+        val delayUnderline = View(this).apply { setBackgroundColor(COLOR_PRIMARY) }
+        delayInputContainer.addView(delayInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        delayInputContainer.addView(delayUnderline, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(2)))
 
-        // Unit selector dropdown button
-        val unitBtn = makeText("${UNIT_LABELS[workUnit]}  ▾", Color.WHITE, 14f).apply {
-            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-            gravity = Gravity.CENTER
+        val unitBtn = makeText("${UNIT_LABELS[workUnit]}  ▾", COLOR_TEXT_SEC, 13f).apply {
+            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
+            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
         }
-
-        // Setup PopupMenu for Unit selection
         val popup = PopupMenu(this, unitBtn)
-        UNIT_LABELS.forEachIndexed { idx, label ->
-            popup.menu.add(0, idx, 0, label)
-        }
+        UNIT_LABELS.forEachIndexed { idx, label -> popup.menu.add(0, idx, 0, label) }
         popup.setOnMenuItemClickListener { item ->
             workUnit = item.itemId
             unitBtn.text = "${UNIT_LABELS[workUnit]}  ▾"
@@ -467,127 +554,102 @@ class OverlayService : Service() {
         }
         unitBtn.setOnClickListener { popup.show() }
 
-        valueRow.addView(valueInputContainer,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(16) })
-        valueRow.addView(unitBtn,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        root.addView(valueRow, fillW().apply { bottomMargin = dpToPx(16) })
+        delayRow.addView(delayInputContainer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(12) })
+        delayRow.addView(unitBtn)
+        root.addView(delayRow, fillW().apply { bottomMargin = dpToPx(16) })
 
-        // Swipe Config Fields Container
-        val SWIPE_DIRECTION_LABELS = arrayOf("Up", "Down", "Left", "Right")
+        // ── Duration row ──────────────────────────────────────────────
+        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
 
-        // 1. Swipe Direction Row
-        val swipeDirRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        swipeDirRow.addView(makeText("Swipe Direction", 0xFFB0B0B0.toInt(), 14f))
-        swipeDirRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        
-        val swipeDirBtn = makeText("${SWIPE_DIRECTION_LABELS[workSwipeDirection]}  ▾", Color.WHITE, 14f).apply {
-            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
-        }
-        val swipeDirPopup = PopupMenu(this, swipeDirBtn)
-        SWIPE_DIRECTION_LABELS.forEachIndexed { idx, label ->
-            swipeDirPopup.menu.add(0, idx, 0, label)
-        }
-        swipeDirPopup.setOnMenuItemClickListener { item ->
-            workSwipeDirection = item.itemId
-            swipeDirBtn.text = "${SWIPE_DIRECTION_LABELS[workSwipeDirection]}  ▾"
+        // Duration label changes based on action type
+        val durationLabel = makeText(
+            if (workActionType == ActionType.SWIPE) "Swipe Speed (ms)" else "Tap Duration (ms)",
+            COLOR_TEXT_HINT, 12f)
+        root.addView(durationLabel, fillW().apply { bottomMargin = dpToPx(6) })
+
+        actionTypePopup.setOnMenuItemClickListener { item ->
+            workActionType = if (item.itemId == 0) ActionType.CLICK else ActionType.SWIPE
+            actionTypeBtn.text = if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾"
+            swipeHintContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
+            durationLabel.text = if (workActionType == ActionType.SWIPE) "Swipe Speed (ms)" else "Tap Duration (ms)"
             true
         }
-        swipeDirBtn.setOnClickListener { swipeDirPopup.show() }
-        swipeDirRow.addView(swipeDirBtn)
-        swipeConfigContainer.addView(swipeDirRow, fillW().apply { bottomMargin = dpToPx(12) })
 
-        // 2. Swipe Length Row
-        val swipeLengthRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val durationRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
-        swipeLengthRow.addView(makeText("Swipe Length (dp)", 0xFFB0B0B0.toInt(), 14f))
-        swipeLengthRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-
-        val swipeLenInputContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        val swipeLenInput = EditText(this).apply {
-            setText("$workSwipeLength")
-            setTextColor(Color.WHITE)
-            textSize = 16f
+        val durationInputContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val durationInput = EditText(this).apply {
+            setText("$workDuration")
+            setTextColor(COLOR_TEXT)
+            textSize = 20f
             gravity = Gravity.CENTER_HORIZONTAL
             background = null
             inputType = InputType.TYPE_CLASS_NUMBER
             setPadding(0, 0, 0, dpToPx(4))
         }
-        val swipeLenUnderline = View(this).apply {
-            setBackgroundColor(0xFF888888.toInt())
+        val durationUnderline = View(this).apply { setBackgroundColor(COLOR_PRIMARY) }
+        durationInputContainer.addView(durationInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        durationInputContainer.addView(durationUnderline, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(2)))
+
+        val msLabel = makeText("ms", COLOR_TEXT_SEC, 13f).apply {
+            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
+            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
         }
-        swipeLenInputContainer.addView(swipeLenInput, LinearLayout.LayoutParams(dpToPx(70), LinearLayout.LayoutParams.WRAP_CONTENT))
-        swipeLenInputContainer.addView(swipeLenUnderline, LinearLayout.LayoutParams(dpToPx(70), dpToPx(1)))
-        
-        swipeLengthRow.addView(swipeLenInputContainer)
-        swipeConfigContainer.addView(swipeLengthRow, fillW().apply { bottomMargin = dpToPx(16) })
 
-        root.addView(swipeConfigContainer, fillW())
+        durationRow.addView(durationInputContainer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(12) })
+        durationRow.addView(msLabel)
+        root.addView(durationRow, fillW().apply { bottomMargin = dpToPx(16) })
 
-        // Bottom buttons row (DELETE | CANCEL | OK)
+        // ── Bottom buttons ────────────────────────────────────────────
+        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
+
         val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
 
-        // DELETE button (bottom-left)
-        val deleteBtn = makeText("DELETE", 0xFFFF4081.toInt(), 14f, bold = true).apply {
-            setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
-            setOnClickListener {
-                removeMarker(md.id)
-                dismissDialog()
-            }
+        val deleteBtn = makeText("DELETE", 0xFFFF4081.toInt(), 13f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
+            setOnClickListener { removeMarker(md.id); dismissDialog() }
         }
         bottomRow.addView(deleteBtn)
-
-        // Spacer to push CANCEL and OK to the right
         bottomRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
 
-        // CANCEL button (bottom-right)
-        val cancelBtn = makeText("CANCEL", 0xFFFF4081.toInt(), 14f, bold = true).apply {
-            setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+        val cancelBtn = makeText("CANCEL", 0xFFFF4081.toInt(), 13f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
             setOnClickListener { dismissDialog() }
         }
         bottomRow.addView(cancelBtn)
 
-        // OK button (bottom-right)
-        val okBtn = makeText("OK", 0xFFFF4081.toInt(), 14f, bold = true).apply {
-            setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+        val okBtn = makeText("OK", 0xFFFF4081.toInt(), 13f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(10), dpToPx(8), dpToPx(10))
             setOnClickListener {
-                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
-                workValue = enteredVal.coerceAtLeast(1L)
-                md.delayValue = workValue
+                // Save delay
+                md.delayValue = (delayInput.text.toString().toLongOrNull() ?: workValue).coerceAtLeast(1L)
                 md.delayUnit  = workUnit
-                
+
+                // Save duration
+                md.tapDuration = (durationInput.text.toString().toLongOrNull() ?: workDuration).coerceAtLeast(1L)
+
+                // Save action type — manage end-point marker
+                val previousType = md.actionType
                 md.actionType = workActionType
+
                 if (workActionType == ActionType.SWIPE) {
-                    md.swipeDirection = workSwipeDirection
-                    md.swipeLengthDp = swipeLenInput.text.toString().toIntOrNull() ?: workSwipeLength
-                }
-                
-                // Update marker view text to show Swipe direction arrow
-                val textView = (md.view as? FrameLayout)?.getChildAt(0) as? TextView
-                if (textView != null) {
-                    if (md.actionType == ActionType.SWIPE) {
-                        val arrow = when (md.swipeDirection) {
-                            0 -> "↑" // UP
-                            1 -> "↓" // DOWN
-                            2 -> "←" // LEFT
-                            3 -> "→" // RIGHT
-                            else -> ""
-                        }
-                        textView.text = "${md.id}$arrow"
-                    } else {
-                        textView.text = "${md.id}"
+                    // Show end-point marker if switching to swipe (or already swipe)
+                    createSwipeEndMarker(md)
+                    // Update badge text with arrow indicator
+                    (md.view as? FrameLayout)?.getChildAt(0)?.let { tv ->
+                        (tv as? TextView)?.text = "${md.id}↕"
+                    }
+                } else {
+                    // Remove end-point if switching back to click
+                    if (previousType == ActionType.SWIPE) removeSwipeEndMarker(md)
+                    (md.view as? FrameLayout)?.getChildAt(0)?.let { tv ->
+                        (tv as? TextView)?.text = "${md.id}"
                     }
                 }
-                
+
                 dismissDialog()
             }
         }
@@ -601,16 +663,14 @@ class OverlayService : Service() {
         @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
 
         configDialogView = root
-        val dp = overlayParams(dpToPx(290), WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
+        val dp = overlayParams(dpToPx(300), WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (md.params.x - dpToPx(130)).coerceIn(dpToPx(8), metrics.widthPixels - dpToPx(300))
-            y = (md.params.y + dpToPx(50)).coerceAtMost(metrics.heightPixels - dpToPx(350))
+            x = (md.params.x - dpToPx(140)).coerceIn(dpToPx(8), metrics.widthPixels - dpToPx(308))
+            y = (md.params.y + dpToPx(50)).coerceAtMost(metrics.heightPixels - dpToPx(400))
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
         }
         windowManager.addView(configDialogView, dp)
     }
-
-
 
     private fun dismissDialog() {
         configDialogView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
@@ -636,26 +696,26 @@ class OverlayService : Service() {
     private fun startAutomation() {
         if (markers.isEmpty()) return
         val half = dpToPx(22).toFloat()
+        val endHalf = dpToPx(18).toFloat()
+
         val points = markers.mapIndexed { i, md ->
             val startX = md.params.x + half
             val startY = md.params.y + half
-            val (endX, endY) = if (md.actionType == ActionType.SWIPE) {
-                val lengthPx = dpToPx(md.swipeLengthDp).toFloat()
-                when (md.swipeDirection) {
-                    0 -> Pair(startX, startY - lengthPx) // UP
-                    1 -> Pair(startX, startY + lengthPx) // DOWN
-                    2 -> Pair(startX - lengthPx, startY) // LEFT
-                    3 -> Pair(startX + lengthPx, startY) // RIGHT
-                    else -> Pair(startX, startY)
-                }
+
+            val (endX, endY) = if (md.actionType == ActionType.SWIPE && md.swipeEndParams != null) {
+                Pair(md.swipeEndParams!!.x + endHalf, md.swipeEndParams!!.y + endHalf)
             } else {
                 Pair(0f, 0f)
             }
+
             ClickPoint(
-                id = md.id, x = startX, y = startY,
+                id = md.id,
+                x = startX, y = startY,
                 actionType = md.actionType,
-                duration = if (md.actionType == ActionType.SWIPE) 300L else md.tapDuration,
-                delayMs = md.delayMs, endX = endX, endY = endY, order = i
+                duration = md.tapDuration,
+                delayMs = md.delayMs,
+                endX = endX, endY = endY,
+                order = i
             )
         }
         val config = AutomationConfig(
@@ -670,6 +730,11 @@ class OverlayService : Service() {
         markers.forEach { md ->
             md.params.flags = md.params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             try { md.view.alpha = 0.35f; windowManager.updateViewLayout(md.view, md.params) } catch (_: Exception) {}
+            // Also hide end-point markers
+            md.swipeEndView?.let { ev ->
+                md.swipeEndParams?.flags = md.swipeEndParams!!.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                try { ev.alpha = 0.2f; windowManager.updateViewLayout(ev, md.swipeEndParams) } catch (_: Exception) {}
+            }
         }
     }
 
@@ -677,6 +742,11 @@ class OverlayService : Service() {
         markers.forEach { md ->
             md.params.flags = md.params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             try { md.view.alpha = 1f; windowManager.updateViewLayout(md.view, md.params) } catch (_: Exception) {}
+            // Also restore end-point markers
+            md.swipeEndView?.let { ev ->
+                md.swipeEndParams?.flags = md.swipeEndParams!!.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                try { ev.alpha = 0.92f; windowManager.updateViewLayout(ev, md.swipeEndParams) } catch (_: Exception) {}
+            }
         }
     }
 
@@ -702,8 +772,13 @@ class OverlayService : Service() {
 
     private fun removeAllOverlays() {
         bubbleView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        swipeLineOverlay?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+        swipeLineOverlay = null
         hidePanel(); dismissDialog()
-        markers.forEach { md -> try { windowManager.removeView(md.view) } catch (_: Exception) {} }
+        markers.forEach { md ->
+            md.swipeEndView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
+            try { windowManager.removeView(md.view) } catch (_: Exception) {}
+        }
         markers.clear()
     }
 
