@@ -192,12 +192,14 @@ class ClickEngine {
                 service.performClick(point.x, point.y, point.duration)
                 _totalClicks.value++
                 Log.d(TAG, "Click at (${point.x}, ${point.y})")
+                delay(point.duration)
             }
 
             ActionType.LONG_PRESS -> {
                 service.performLongPress(point.x, point.y, point.duration)
                 _totalClicks.value++
                 Log.d(TAG, "Long press at (${point.x}, ${point.y}) for ${point.duration}ms")
+                delay(point.duration)
             }
 
             ActionType.SWIPE -> {
@@ -208,6 +210,7 @@ class ClickEngine {
                 )
                 _totalClicks.value++
                 Log.d(TAG, "Swipe from (${point.x}, ${point.y}) to (${point.endX}, ${point.endY})")
+                delay(point.duration)
             }
 
             ActionType.WAIT -> {

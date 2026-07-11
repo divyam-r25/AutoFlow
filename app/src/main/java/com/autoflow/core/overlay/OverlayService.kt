@@ -23,6 +23,7 @@ import android.widget.ImageView
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.PopupMenu
 import android.text.InputType
 import com.autoflow.automation.engine.ClickEngine
 import com.autoflow.automation.models.ActionType
@@ -109,7 +110,10 @@ class OverlayService : Service() {
         val id: Int,
         var tapDuration: Long = 100L,
         var delayValue: Long = 300L,
-        var delayUnit: Int = UNIT_MS
+        var delayUnit: Int = UNIT_MS,
+        var actionType: ActionType = ActionType.CLICK,
+        var swipeDirection: Int = 1, // Default DOWN
+        var swipeLengthDp: Int = 200
     ) {
         /** Effective delay in milliseconds */
         val delayMs: Long get() = delayValue * UNIT_TO_MS[delayUnit]
@@ -234,13 +238,9 @@ class OverlayService : Service() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
         }
-        playPauseButton = panelBtn(
-            if (isRunning) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-            COLOR_SUCCESS) { onPlayPauseClicked() }
         row.addView(playPauseButton, btnP())
         row.addView(panelBtn(android.R.drawable.ic_delete, COLOR_ERROR) { onStopClicked() }, btnP())
         row.addView(panelBtn(android.R.drawable.ic_input_add, COLOR_PRIMARY) { addClickPoint() }, btnP())
-        row.addView(panelBtn(android.R.drawable.ic_menu_preferences, COLOR_WARNING) { showGlobalSettings() }, btnP())
         row.addView(panelBtn(android.R.drawable.ic_menu_close_clear_cancel, 0xFF475569.toInt()) { stopSelf() }, btnP())
         panel.addView(row)
 
@@ -353,214 +353,247 @@ class OverlayService : Service() {
     private fun showPointConfig(md: MarkerData) {
         dismissDialog()
 
-        // Working copies so we don't mutate until OK
         var workValue = md.delayValue
         var workUnit  = md.delayUnit
-        var workDuration = md.tapDuration
-        var unitDropdownOpen = false
+        var workActionType = md.actionType
+        var workSwipeDirection = md.swipeDirection
+        var workSwipeLength = md.swipeLengthDp
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = roundRect(COLOR_CARD, dpToPx(18))
-            elevation = dpToPx(20).toFloat()
-            setPadding(dpToPx(16), dpToPx(16), dpToPx(16), dpToPx(14))
+            background = roundRect(0xFF2D2D2D.toInt(), dpToPx(12))
+            elevation = dpToPx(16).toFloat()
+            setPadding(dpToPx(24), dpToPx(24), dpToPx(24), dpToPx(16))
         }
 
-        // ── Header row (badge + close) ──────────────────────────────
+        // Header Row (Badge containing the ID)
         val headerRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        // Number badge (orange/amber for the active point)
         val badge = FrameLayout(this).apply {
-            background = createCircle(COLOR_WARNING)
+            background = createCircle(Color.WHITE)
             val s = dpToPx(28); minimumWidth = s; minimumHeight = s
         }
-        badge.addView(makeText("${md.id}", Color.WHITE, 11f, bold = true).also { it.gravity = Gravity.CENTER },
+        badge.addView(makeText("${md.id}", 0xFFF59E0B.toInt(), 13f, bold = true).also { it.gravity = Gravity.CENTER },
             FrameLayout.LayoutParams(dpToPx(28), dpToPx(28)))
-        headerRow.addView(badge, LinearLayout.LayoutParams(dpToPx(28), dpToPx(28)).apply { marginEnd = dpToPx(8) })
-        headerRow.addView(makeDividerLine(vertical = false),
-            LinearLayout.LayoutParams(0, 2, 1f).apply { gravity = Gravity.CENTER_VERTICAL })
-        val closeBtn = makeText("  ✕", COLOR_TEXT_SEC, 14f).apply {
-            setOnClickListener { dismissDialog() }
-        }
-        headerRow.addView(closeBtn)
+        headerRow.addView(badge)
         root.addView(headerRow, fillW().apply { bottomMargin = dpToPx(12) })
 
-        // ── Delay description ─────────────────────────────────────────
-        val desc = makeText(
-            "The delay time before performing the next action",
-            COLOR_TEXT_SEC, 12f
-        ).apply { lineHeight = dpToPx(18) }
-        root.addView(desc, fillW().apply { bottomMargin = dpToPx(12) })
+        // Description
+        val desc = makeText("The delay time before performing the next action", 0xFFB0B0B0.toInt(), 14f).apply {
+            lineHeight = dpToPx(20)
+        }
+        root.addView(desc, fillW().apply { bottomMargin = dpToPx(16) })
 
-        // ── Value field + Unit selector row ───────────────────────────
+        // Action Type Row
+        val actionTypeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        actionTypeRow.addView(makeText("Action Type", 0xFFB0B0B0.toInt(), 14f))
+        actionTypeRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        
+        val actionTypeBtn = makeText(if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾", Color.WHITE, 14f).apply {
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+        }
+        val actionTypePopup = PopupMenu(this, actionTypeBtn)
+        actionTypePopup.menu.add(0, 0, 0, "Click")
+        actionTypePopup.menu.add(0, 1, 0, "Swipe")
+        
+        val swipeConfigContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
+        }
+
+        actionTypePopup.setOnMenuItemClickListener { item ->
+            workActionType = if (item.itemId == 0) ActionType.CLICK else ActionType.SWIPE
+            actionTypeBtn.text = if (workActionType == ActionType.CLICK) "Click  ▾" else "Swipe  ▾"
+            swipeConfigContainer.visibility = if (workActionType == ActionType.SWIPE) View.VISIBLE else View.GONE
+            true
+        }
+        actionTypeBtn.setOnClickListener { actionTypePopup.show() }
+        actionTypeRow.addView(actionTypeBtn)
+        root.addView(actionTypeRow, fillW().apply { bottomMargin = dpToPx(12) })
+
+        // Input field + Unit selector row (Delay Label)
+        val delayLabelRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        delayLabelRow.addView(makeText("Delay Interval", 0xFFB0B0B0.toInt(), 12f))
+        root.addView(delayLabelRow, fillW().apply { bottomMargin = dpToPx(6) })
+
         val valueRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
 
-        // Value display input (manually editable)
+        // EditText for manual value entry
+        val valueInputContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
         val valueInput = EditText(this).apply {
             setText("$workValue")
-            setTextColor(COLOR_TEXT)
+            setTextColor(Color.WHITE)
             textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-            minWidth = dpToPx(80)
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = null
             inputType = InputType.TYPE_CLASS_NUMBER
+            setPadding(0, 0, 0, dpToPx(6))
         }
-
-        // Unit selector button (shows current unit + expand arrow)
-        val unitBtn: TextView = makeText("${UNIT_LABELS[workUnit]}  ▾", COLOR_TEXT, 12f).apply {
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
+        val underline = View(this).apply {
+            setBackgroundColor(0xFF888888.toInt())
         }
+        valueInputContainer.addView(valueInput, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        valueInputContainer.addView(underline, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpToPx(1)))
 
-        // Inline unit dropdown list (hidden initially)
-        val unitDropdown = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundRect(0xFF253347.toInt(), dpToPx(8))
-            visibility = View.GONE
-        }
-
-        // Build unit option rows
-        fun buildUnitOptions(onSelect: (Int) -> Unit) {
-            unitDropdown.removeAllViews()
-            UNIT_LABELS.forEachIndexed { idx, label ->
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-                    background = if (idx == workUnit) roundRect(COLOR_PRIMARY, dpToPx(6)) else null
-                    setOnClickListener { onSelect(idx) }
-                }
-                row.addView(makeText(label,
-                    if (idx == workUnit) Color.WHITE else COLOR_TEXT_SEC, 12f),
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                if (idx == workUnit) {
-                    row.addView(makeText("✓", COLOR_TEXT, 12f, bold = true).apply {
-                        gravity = Gravity.END
-                    })
-                }
-                unitDropdown.addView(row)
-            }
-        }
-
-        unitBtn.setOnClickListener {
-            unitDropdownOpen = !unitDropdownOpen
-            if (unitDropdownOpen) {
-                buildUnitOptions { selectedIdx ->
-                    workUnit = selectedIdx
-                    unitBtn.text = "${UNIT_LABELS[workUnit]}  ▾"
-                    unitDropdownOpen = false
-                    unitDropdown.visibility = View.GONE
-                    buildUnitOptions {}  // refresh checkmark
-                }
-                unitDropdown.visibility = View.VISIBLE
-            } else {
-                unitDropdown.visibility = View.GONE
-            }
-        }
-
-        valueRow.addView(valueInput,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(8) })
-        valueRow.addView(unitBtn,
-            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(valueRow, fillW().apply { bottomMargin = dpToPx(8) })
-        root.addView(unitDropdown, fillW().apply { bottomMargin = dpToPx(8) })
-
-        // ── Stepper row for delay value ──────────────────────────────
-        val stepRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-        }
-        val stepSizes = listOf(50L to "−−", 1L to "−", 1L to "+", 50L to "++")
-        stepSizes.forEachIndexed { i, (step, label) ->
-            val isInc = i >= 2
-            val btn = makeText(" $label ", COLOR_TEXT, 13f, bold = true).apply {
-                background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-                setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-                setOnClickListener {
-                    val currentVal = valueInput.text.toString().toLongOrNull() ?: workValue
-                    workValue = if (isInc) (currentVal + step).coerceAtMost(99999L)
-                                else        (currentVal - step).coerceAtLeast(1L)
-                    valueInput.setText("$workValue")
-                    valueInput.setSelection(valueInput.text.length)
-                }
-            }
-            stepRow.addView(btn, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dpToPx(4); marginEnd = dpToPx(4) })
-        }
-        root.addView(stepRow, fillW().apply { bottomMargin = dpToPx(14) })
-
-        // ── Divider ────────────────────────────────────────────────────
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
-
-        // ── Tap Duration section ───────────────────────────────────────
-        root.addView(makeText("⏱  Tap Duration", COLOR_TEXT_SEC, 11f, bold = true),
-            fillW().apply { bottomMargin = dpToPx(8) })
-
-        val durDisplay = makeText("${workDuration} ms", COLOR_TEXT, 14f, bold = true).apply {
+        // Unit selector dropdown button
+        val unitBtn = makeText("${UNIT_LABELS[workUnit]}  ▾", Color.WHITE, 14f).apply {
+            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
             gravity = Gravity.CENTER
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
         }
-        fun refreshDur() { durDisplay.text = "${workDuration} ms" }
 
-        val durRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        // Setup PopupMenu for Unit selection
+        val popup = PopupMenu(this, unitBtn)
+        UNIT_LABELS.forEachIndexed { idx, label ->
+            popup.menu.add(0, idx, 0, label)
         }
-        val durMinus = makeText("  −  ", COLOR_TEXT, 14f, bold = true).apply {
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-            setOnClickListener { workDuration = (workDuration - 10).coerceAtLeast(10L); refreshDur() }
+        popup.setOnMenuItemClickListener { item ->
+            workUnit = item.itemId
+            unitBtn.text = "${UNIT_LABELS[workUnit]}  ▾"
+            true
         }
-        val durPlus = makeText("  +  ", COLOR_TEXT, 14f, bold = true).apply {
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-            setOnClickListener { workDuration = (workDuration + 10).coerceAtMost(2000L); refreshDur() }
-        }
-        durRow.addView(durMinus, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dpToPx(6) })
-        durRow.addView(durDisplay, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dpToPx(6) })
-        durRow.addView(durPlus)
-        root.addView(durRow, fillW().apply { bottomMargin = dpToPx(14) })
+        unitBtn.setOnClickListener { popup.show() }
 
-        // ── Divider ────────────────────────────────────────────────────
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
+        valueRow.addView(valueInputContainer,
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dpToPx(16) })
+        valueRow.addView(unitBtn,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        root.addView(valueRow, fillW().apply { bottomMargin = dpToPx(16) })
 
-        // ── Bottom buttons (Delete | OK) ───────────────────────────────
+        // Swipe Config Fields Container
+        val SWIPE_DIRECTION_LABELS = arrayOf("Up", "Down", "Left", "Right")
+
+        // 1. Swipe Direction Row
+        val swipeDirRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        swipeDirRow.addView(makeText("Swipe Direction", 0xFFB0B0B0.toInt(), 14f))
+        swipeDirRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        
+        val swipeDirBtn = makeText("${SWIPE_DIRECTION_LABELS[workSwipeDirection]}  ▾", Color.WHITE, 14f).apply {
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+        }
+        val swipeDirPopup = PopupMenu(this, swipeDirBtn)
+        SWIPE_DIRECTION_LABELS.forEachIndexed { idx, label ->
+            swipeDirPopup.menu.add(0, idx, 0, label)
+        }
+        swipeDirPopup.setOnMenuItemClickListener { item ->
+            workSwipeDirection = item.itemId
+            swipeDirBtn.text = "${SWIPE_DIRECTION_LABELS[workSwipeDirection]}  ▾"
+            true
+        }
+        swipeDirBtn.setOnClickListener { swipeDirPopup.show() }
+        swipeDirRow.addView(swipeDirBtn)
+        swipeConfigContainer.addView(swipeDirRow, fillW().apply { bottomMargin = dpToPx(12) })
+
+        // 2. Swipe Length Row
+        val swipeLengthRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        swipeLengthRow.addView(makeText("Swipe Length (dp)", 0xFFB0B0B0.toInt(), 14f))
+        swipeLengthRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+
+        val swipeLenInputContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val swipeLenInput = EditText(this).apply {
+            setText("$workSwipeLength")
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = null
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setPadding(0, 0, 0, dpToPx(4))
+        }
+        val swipeLenUnderline = View(this).apply {
+            setBackgroundColor(0xFF888888.toInt())
+        }
+        swipeLenInputContainer.addView(swipeLenInput, LinearLayout.LayoutParams(dpToPx(70), LinearLayout.LayoutParams.WRAP_CONTENT))
+        swipeLenInputContainer.addView(swipeLenUnderline, LinearLayout.LayoutParams(dpToPx(70), dpToPx(1)))
+        
+        swipeLengthRow.addView(swipeLenInputContainer)
+        swipeConfigContainer.addView(swipeLengthRow, fillW().apply { bottomMargin = dpToPx(16) })
+
+        root.addView(swipeConfigContainer, fillW())
+
+        // Bottom buttons row (DELETE | CANCEL | OK)
         val bottomRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         }
-        val deleteBtn = makeText("✕  Delete", COLOR_ERROR, 12f, bold = true).apply {
-            background = roundRect(0xFF3B1F22.toInt(), dpToPx(8))
-            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-            setOnClickListener { removeMarker(md.id); dismissDialog() }
-        }
-        val okBtn = makeText("   OK   ", Color.WHITE, 13f, bold = true).apply {
-            background = roundRect(COLOR_PRIMARY, dpToPx(8))
-            setPadding(dpToPx(14), dpToPx(10), dpToPx(14), dpToPx(10))
+
+        // DELETE button (bottom-left)
+        val deleteBtn = makeText("DELETE", 0xFFFF4081.toInt(), 14f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
             setOnClickListener {
-                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
-                workValue = enteredVal.coerceIn(1L, 99999L)
-                // Commit to the marker
-                md.delayValue = workValue
-                md.delayUnit  = workUnit
-                md.tapDuration = workDuration
+                removeMarker(md.id)
                 dismissDialog()
             }
         }
-        bottomRow.addView(deleteBtn,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dpToPx(8) })
-        // Spacer
-        bottomRow.addView(View(this), LinearLayout.LayoutParams(0,1,1f))
-        bottomRow.addView(okBtn)
+        bottomRow.addView(deleteBtn)
+
+        // Spacer to push CANCEL and OK to the right
+        bottomRow.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+
+        // CANCEL button (bottom-right)
+        val cancelBtn = makeText("CANCEL", 0xFFFF4081.toInt(), 14f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+            setOnClickListener { dismissDialog() }
+        }
+        bottomRow.addView(cancelBtn)
+
+        // OK button (bottom-right)
+        val okBtn = makeText("OK", 0xFFFF4081.toInt(), 14f, bold = true).apply {
+            setPadding(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
+            setOnClickListener {
+                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
+                workValue = enteredVal.coerceAtLeast(1L)
+                md.delayValue = workValue
+                md.delayUnit  = workUnit
+                
+                md.actionType = workActionType
+                if (workActionType == ActionType.SWIPE) {
+                    md.swipeDirection = workSwipeDirection
+                    md.swipeLengthDp = swipeLenInput.text.toString().toIntOrNull() ?: workSwipeLength
+                }
+                
+                // Update marker view text to show Swipe direction arrow
+                val textView = (md.view as? FrameLayout)?.getChildAt(0) as? TextView
+                if (textView != null) {
+                    if (md.actionType == ActionType.SWIPE) {
+                        val arrow = when (md.swipeDirection) {
+                            0 -> "↑" // UP
+                            1 -> "↓" // DOWN
+                            2 -> "←" // LEFT
+                            3 -> "→" // RIGHT
+                            else -> ""
+                        }
+                        textView.text = "${md.id}$arrow"
+                    } else {
+                        textView.text = "${md.id}"
+                    }
+                }
+                
+                dismissDialog()
+            }
+        }
+        bottomRow.addView(okBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { marginStart = dpToPx(8) })
+
         root.addView(bottomRow, fillW())
 
-        // ── Position and show ─────────────────────────────────────────
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
 
@@ -574,176 +607,7 @@ class OverlayService : Service() {
         windowManager.addView(configDialogView, dp)
     }
 
-    // ─────────────────────────────────────────────────────────────────
-    // Global Settings Dialog
-    // ─────────────────────────────────────────────────────────────────
 
-    private fun showGlobalSettings() {
-        dismissDialog()
-        if (isPanelVisible) hidePanel()
-
-        var workValue = globalDelayValue
-        var workUnit  = globalDelayUnit
-        var workDur   = globalTapDuration
-        var dropOpen  = false
-
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundRect(COLOR_CARD, dpToPx(18))
-            elevation = dpToPx(20).toFloat()
-            setPadding(dpToPx(18), dpToPx(18), dpToPx(18), dpToPx(16))
-        }
-
-        root.addView(makeText("⚙  Global Settings", COLOR_TEXT, 16f, bold = true).apply {
-            gravity = Gravity.CENTER
-        }, fillW().apply { bottomMargin = dpToPx(14) })
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(14) })
-
-        // Delay section
-        root.addView(makeText("Default delay between taps", COLOR_TEXT_SEC, 11f, bold = true),
-            fillW().apply { bottomMargin = dpToPx(10) })
-
-        val valueInput = EditText(this).apply {
-            setText("$workValue")
-            setTextColor(COLOR_TEXT)
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER; background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-            minWidth = dpToPx(80)
-            inputType = InputType.TYPE_CLASS_NUMBER
-        }
-        val unitBtn = makeText("${UNIT_LABELS[workUnit]}  ▾", COLOR_TEXT, 12f).apply {
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
-        }
-        val unitDropdown = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = roundRect(0xFF253347.toInt(), dpToPx(8))
-            visibility = View.GONE
-        }
-
-        fun buildOptions() {
-            unitDropdown.removeAllViews()
-            UNIT_LABELS.forEachIndexed { idx, label ->
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
-                    background = if (idx == workUnit) roundRect(COLOR_PRIMARY, dpToPx(6)) else null
-                    setOnClickListener {
-                        workUnit = idx; unitBtn.text = "${UNIT_LABELS[idx]}  ▾"
-                        dropOpen = false; unitDropdown.visibility = View.GONE; buildOptions()
-                    }
-                }
-                row.addView(makeText(label, if (idx == workUnit) Color.WHITE else COLOR_TEXT_SEC, 12f),
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                if (idx == workUnit) row.addView(makeText("✓", COLOR_TEXT, 12f, bold = true))
-                unitDropdown.addView(row)
-            }
-        }
-        buildOptions()
-        unitBtn.setOnClickListener {
-            dropOpen = !dropOpen
-            unitDropdown.visibility = if (dropOpen) View.VISIBLE else View.GONE
-            if (dropOpen) buildOptions()
-        }
-
-        val vr = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        }
-        vr.addView(valueInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dpToPx(8) })
-        vr.addView(unitBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(vr, fillW().apply { bottomMargin = dpToPx(8) })
-        root.addView(unitDropdown, fillW().apply { bottomMargin = dpToPx(8) })
-
-        val sr = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER
-        }
-        listOf(50L to "−−", 1L to "−", 1L to "+", 50L to "++").forEachIndexed { i, (step, lbl) ->
-            val inc = i >= 2
-            sr.addView(makeText(" $lbl ", COLOR_TEXT, 13f, bold = true).apply {
-                background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-                setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-                setOnClickListener {
-                    val currentVal = valueInput.text.toString().toLongOrNull() ?: workValue
-                    workValue = if (inc) (currentVal + step).coerceAtMost(99999L)
-                                else     (currentVal - step).coerceAtLeast(1L)
-                    valueInput.setText("$workValue")
-                    valueInput.setSelection(valueInput.text.length)
-                }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dpToPx(4); marginEnd = dpToPx(4) })
-        }
-        root.addView(sr, fillW().apply { bottomMargin = dpToPx(14) })
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
-
-        // Tap duration section
-        root.addView(makeText("⏱  Default tap duration", COLOR_TEXT_SEC, 11f, bold = true),
-            fillW().apply { bottomMargin = dpToPx(8) })
-        val durDisplay = makeText("${workDur} ms", COLOR_TEXT, 14f, bold = true).apply {
-            gravity = Gravity.CENTER; background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-        }
-        fun refreshDur() { durDisplay.text = "${workDur} ms" }
-        val dr = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-        }
-        makeText("  −  ", COLOR_TEXT, 14f, bold = true).apply {
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-            setOnClickListener { workDur = (workDur - 10).coerceAtLeast(10L); refreshDur() }
-        }.also { dr.addView(it, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-            LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dpToPx(6) }) }
-        dr.addView(durDisplay, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            .apply { marginEnd = dpToPx(6) })
-        makeText("  +  ", COLOR_TEXT, 14f, bold = true).apply {
-            background = roundRect(COLOR_CARD_INNER, dpToPx(8))
-            setPadding(dpToPx(10), dpToPx(8), dpToPx(10), dpToPx(8))
-            setOnClickListener { workDur = (workDur + 10).coerceAtMost(2000L); refreshDur() }
-        }.also { dr.addView(it) }
-        root.addView(dr, fillW().apply { bottomMargin = dpToPx(16) })
-        root.addView(makeDividerLine(), fillW().apply { bottomMargin = dpToPx(12) })
-
-        // Apply to all
-        val applyBtn = makeText("↻  Apply to All Pointers", Color.WHITE, 13f, bold = true).apply {
-            gravity = Gravity.CENTER
-            background = roundRect(COLOR_PRIMARY, dpToPx(10))
-            setPadding(dpToPx(14), dpToPx(12), dpToPx(14), dpToPx(12))
-            setOnClickListener {
-                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
-                workValue = enteredVal.coerceIn(1L, 99999L)
-                globalDelayValue = workValue; globalDelayUnit = workUnit; globalTapDuration = workDur
-                markers.forEach { m ->
-                    m.tapDuration = workDur; m.delayValue = workValue; m.delayUnit = workUnit
-                }
-                dismissDialog()
-            }
-        }
-        root.addView(applyBtn, fillW().apply { bottomMargin = dpToPx(8) })
-
-        val doneBtn = makeText("   ✓  Done   ", Color.WHITE, 13f, bold = true).apply {
-            gravity = Gravity.CENTER; background = roundRect(COLOR_SUCCESS, dpToPx(10))
-            setPadding(dpToPx(14), dpToPx(12), dpToPx(14), dpToPx(12))
-            setOnClickListener {
-                val enteredVal = valueInput.text.toString().toLongOrNull() ?: workValue
-                workValue = enteredVal.coerceIn(1L, 99999L)
-                globalDelayValue = workValue; globalDelayUnit = workUnit; globalTapDuration = workDur
-                dismissDialog()
-            }
-        }
-        root.addView(doneBtn, fillW())
-
-        val metrics = DisplayMetrics()
-        @Suppress("DEPRECATION") windowManager.defaultDisplay.getMetrics(metrics)
-
-        configDialogView = root
-        windowManager.addView(root, overlayParams(dpToPx(290), WindowManager.LayoutParams.WRAP_CONTENT, focusable = true).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = metrics.widthPixels / 2 - dpToPx(145); y = dpToPx(100)
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
-        })
-    }
 
     private fun dismissDialog() {
         configDialogView?.let { try { windowManager.removeView(it) } catch (_: Exception) {} }
@@ -770,10 +634,25 @@ class OverlayService : Service() {
         if (markers.isEmpty()) return
         val half = dpToPx(22).toFloat()
         val points = markers.mapIndexed { i, md ->
+            val startX = md.params.x + half
+            val startY = md.params.y + half
+            val (endX, endY) = if (md.actionType == ActionType.SWIPE) {
+                val lengthPx = dpToPx(md.swipeLengthDp).toFloat()
+                when (md.swipeDirection) {
+                    0 -> Pair(startX, startY - lengthPx) // UP
+                    1 -> Pair(startX, startY + lengthPx) // DOWN
+                    2 -> Pair(startX - lengthPx, startY) // LEFT
+                    3 -> Pair(startX + lengthPx, startY) // RIGHT
+                    else -> Pair(startX, startY)
+                }
+            } else {
+                Pair(0f, 0f)
+            }
             ClickPoint(
-                id = md.id, x = md.params.x + half, y = md.params.y + half,
-                actionType = ActionType.CLICK, duration = md.tapDuration,
-                delayMs = md.delayMs, order = i
+                id = md.id, x = startX, y = startY,
+                actionType = md.actionType,
+                duration = if (md.actionType == ActionType.SWIPE) 300L else md.tapDuration,
+                delayMs = md.delayMs, endX = endX, endY = endY, order = i
             )
         }
         val config = AutomationConfig(
@@ -886,7 +765,7 @@ class OverlayService : Service() {
 
     private fun overlayParams(w: Int, h: Int, focusable: Boolean = false) = WindowManager.LayoutParams(
         w, h, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        if (focusable) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        if (focusable) WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
         PixelFormat.TRANSLUCENT)
 
     private fun createCircle(color: Int) = GradientDrawable().apply {
